@@ -40,19 +40,24 @@ namespace SparkWordsProcessor
         {
             Console.WriteLine("Spark Words Processor");
             Console.WriteLine("Parses a file with word counts for the training model.");
-            if (args.Length > 1)
+            if (args.Length < 1 || args.Length > 2)
             {
-                Console.WriteLine("This application only accepts one optional argument: the path to the cache.");
+                Console.WriteLine("Arguments are: <sessionTag> [path-to-cache] where sessionTag is an integer.");
                 return;
             }
 
-            if (args.Length == 1)
+            if (!int.TryParse(args[0], out var tag))
             {
-                filesHelper = new FilesHelper(cache: args[0]);
+                Console.WriteLine($"Session tag must be an integer! Value {args[0]} is invalid!");
+            }
+
+            if (args.Length == 2)
+            {
+                filesHelper = new FilesHelper(tag, cache: args[1]);
             }
             else
             {
-                filesHelper = new FilesHelper();
+                filesHelper = new FilesHelper(tag);
             }
 
             Console.WriteLine($"Initialized cache to {filesHelper.PathToCache}");

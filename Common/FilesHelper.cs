@@ -14,10 +14,10 @@ namespace Common
         /// <summary>
         /// Initializes a new instance of the <see cref="FilesHelper"/> class.
         /// </summary>
+        /// <param name="sessionTag">Unique identifier for a workflow. Makes a unique folder.</param>
         /// <param name="trainingRepo">The path to the repo to train from.</param>
-        /// <param name="predictingRepo">The path to the repo to predict.</param>
         /// <param name="cache">The path to the cache (defaults to user local data).</param>
-        public FilesHelper(string trainingRepo = null, string cache = null)
+        public FilesHelper(int sessionTag, string trainingRepo = null, string cache = null)
         {
             PathToTrainingRepo = trainingRepo;
 
@@ -32,7 +32,7 @@ namespace Common
             if (string.IsNullOrWhiteSpace(cache))
             {
                 var path = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-                PathToCache = $"{path}\\SparkMLDocCategorization";
+                PathToCache = $"{path}\\SparkMLDocCategorization\\session{sessionTag}";
             }
             else
             {
@@ -45,10 +45,6 @@ namespace Common
             ModelTrainingFile = Path.Combine(PathToCache, "spark-model-input.csv");
             TrainedModel = Path.Combine(PathToCache, "ml-clustering-model.zip");
             CategorizedList = Path.Combine(PathToCache, "categorized.csv");
-
-            PathToWordsDir = $"{PathToCache}\\words";
-
-            EnsureExists(PathToWordsDir);
         }
 
         /// <summary>
@@ -80,11 +76,6 @@ namespace Common
         /// Gets the path to the cache.
         /// </summary>
         public string PathToCache { get; private set; }
-
-        /// <summary>
-        /// Gets the path to the words directory.
-        /// </summary>
-        public string PathToWordsDir { get; private set; }
 
         /// <summary>
         /// Determine whether a file exists.
@@ -153,7 +144,6 @@ namespace Common
         public void WriteToTempFiles(FileDataParse parse)
         {
             File.AppendAllText(TempDataFile, parse.TempData);
-            File.WriteAllText(Path.Combine(PathToWordsDir, parse.File), parse.Words);
         }
 
         /// <summary>

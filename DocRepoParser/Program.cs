@@ -16,22 +16,28 @@ namespace DocRepoParser
         {
             Console.WriteLine("Doc Repo Parser");
             Console.WriteLine("Parses a repository with markdown into an input file for Spark.");
-            if (args.Length < 1 || args.Length > 2)
+            if (args.Length < 2 || args.Length > 3)
             {
                 Console.WriteLine("Usage:");
                 Console.Write($"dotnet run {typeof(Program).Assembly.Location.Split("\\")[^1]}");
-                Console.Write(" <path-to-repo> [path-to-cache]");
+                Console.Write(" <sessionTag> <path-to-repo> [path-to-cache]");
+                Console.Write("(sessionTag is an integer to uniquely identify a flow)");
                 return;
             }
 
-            Console.WriteLine($"Initializing with repo path: {args[0]}");
-            if (args.Length == 1)
+            if (!int.TryParse(args[0], out var tag))
             {
-                filesHelper = new FilesHelper(trainingRepo: args[0]);
+                Console.WriteLine($"Session tag must be an integer! Value {args[0]} is invalid!");
+            }
+
+            Console.WriteLine($"Initializing with repo path: {args[1]}");
+            if (args.Length == 2)
+            {
+                filesHelper = new FilesHelper(tag, trainingRepo: args[1]);
             }
             else
             {
-                filesHelper = new FilesHelper(trainingRepo: args[0], cache: args[1]);
+                filesHelper = new FilesHelper(tag, trainingRepo: args[1], cache: args[2]);
             }
 
             Console.WriteLine($"Initialized cache to {filesHelper.PathToCache}");

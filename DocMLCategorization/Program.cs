@@ -4,7 +4,6 @@ using System;
 using System.Linq;
 using Common;
 using Microsoft.ML;
-using Microsoft.ML.Data;
 
 namespace DocMLCategorization
 {
@@ -38,32 +37,37 @@ namespace DocMLCategorization
         {
             Console.WriteLine("Doc ML Categorization.");
             Console.WriteLine("Predicts categories documents should belong to.");
-            if (args.Length < 1 || args.Length > 2)
+            if (args.Length < 2 || args.Length > 3)
             {
                 Console.WriteLine("Usage:");
                 Console.Write($"dotnet run {typeof(Program).Assembly.Location.Split("\\")[^1]}");
-                Console.Write(" <train|predict|trainandpredict> [path-to-cache]");
+                Console.Write(" <sessionTag> <train|predict|trainandpredict> [path-to-cache]");
                 return;
             }
 
-            if (Enum.TryParse(args[0].Trim(), ignoreCase: true, out Modes result))
+            if (!int.TryParse(args[0], out var tag))
+            {
+                Console.WriteLine($"Session tag must be an integer! Value {args[0]} is invalid!");
+            }
+
+            if (Enum.TryParse(args[1].Trim(), ignoreCase: true, out Modes result))
             {
                 mode = result;
             }
             else
             {
-                Console.WriteLine($"Invalid mode passed as first argument: {args[0].Trim()}");
+                Console.WriteLine($"Invalid mode passed as second argument: {args[1].Trim()}");
                 Console.WriteLine("Valid modes are: train, predict, or trainandpredict.");
                 return;
             }
 
-            if (args.Length == 1)
+            if (args.Length == 2)
             {
-                filesHelper = new FilesHelper();
+                filesHelper = new FilesHelper(tag);
             }
             else
             {
-                filesHelper = new FilesHelper(cache: args[1]);
+                filesHelper = new FilesHelper(tag, cache: args[2]);
             }
 
             Console.WriteLine($"Initialized cache to {filesHelper.PathToCache}");

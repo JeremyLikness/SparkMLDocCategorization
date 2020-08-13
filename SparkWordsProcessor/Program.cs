@@ -146,15 +146,6 @@ namespace SparkWordsProcessor
 
             top20.CreateOrReplaceTempView("topwords");
 
-            // calculate reading time
-            static string CalculateReadingTime(int count)
-            {
-                var totalTime = count / WordsPerMinute;
-                return ParseTime(totalTime);
-            }
-
-            spark.Udf().Register<int, string>(nameof(CalculateReadingTime), CalculateReadingTime);
-
             // main query, max 20 words per file
             var join = spark.Sql(
                 "SELECT distinct d.File, d.Title, d.Subtitle1, d.Subtitle2, d.Subtitle3, d.Subtitle4, d.Subtitle5, " +
@@ -176,6 +167,15 @@ namespace SparkWordsProcessor
                 nameof(FileDataParse.WordCount).AsColumn(),
             };
 
+            // calculate reading time
+            static string CalculateReadingTime(int count)
+            {
+                var totalTime = count / WordsPerMinute;
+                return ParseTime(totalTime);
+            }
+
+            spark.Udf().Register<int, string>(nameof(CalculateReadingTime), CalculateReadingTime);
+
             // roll-up words into single "top 20" field
             var final = join.GroupBy(cols)
                 .Agg(Functions.CollectList(word.AsColumn()).Alias(nameof(FileDataParse.Top20Words)))
@@ -192,35 +192,24 @@ namespace SparkWordsProcessor
 
             filesHelper.NewModelSession();
 
-            var progress = new ProgressHelper(TimeSpan.FromSeconds(5), Console.Write);
-
-            foreach (var result in final.Collect())
-            {
-                var title = result.GetAs<string>(nameof(FileDataParse.Title));
-
-                if (!string.IsNullOrWhiteSpace(title))
+            final.Collect()
+                .Where(row => !string.IsNullOrWhiteSpace(row.GetColumnValue(f => f.Title)))
+                .Select(row => new FileDataParse
                 {
-                    var fileData = new FileDataParse
-                    {
-                        File = result.GetAs<string>(nameof(FileDataParse.File)),
-                        Title = title.ExtractWords().Trim(),
-                        Subtitle1 = result.GetAs<string>(nameof(FileDataParse.Subtitle1)).ExtractWords().Trim(),
-                        Subtitle2 = result.GetAs<string>(nameof(FileDataParse.Subtitle2)).ExtractWords().Trim(),
-                        Subtitle3 = result.GetAs<string>(nameof(FileDataParse.Subtitle3)).ExtractWords().Trim(),
-                        Subtitle4 = result.GetAs<string>(nameof(FileDataParse.Subtitle4)).ExtractWords().Trim(),
-                        Subtitle5 = result.GetAs<string>(nameof(FileDataParse.Subtitle5)).ExtractWords().Trim(),
-                        Top20Words = result.GetAs<string>(nameof(FileDataParse.Top20Words)).ExtractWords().Trim(),
-                        WordCount = result.GetAs<int>(nameof(FileDataParse.WordCount)),
-                        ReadingTime = result.GetAs<string>(nameof(FileDataParse.ReadingTime)),
-                    };
+                    File = row.GetColumnValue(f => f.File, false),
+                    Title = row.GetColumnValue(f => f.Title),
+                    Subtitle1 = row.GetColumnValue(f => f.Subtitle1),
+                    Subtitle2 = row.GetColumnValue(f => f.Subtitle2),
+                    Subtitle3 = row.GetColumnValue(f => f.Subtitle3),
+                    Subtitle4 = row.GetColumnValue(f => f.Subtitle4),
+                    Subtitle5 = row.GetColumnValue(f => f.Subtitle5),
+                    Top20Words = row.GetColumnValue(f => f.Top20Words),
+                    WordCount = row.GetColumnValue(f => f.WordCount),
+                    ReadingTime = row.GetColumnValue(f => f.ReadingTime, false),
+                }).ForEach(fp => filesHelper
+                    .AppendToFile(filesHelper.ModelTrainingFile, fp.ModelData));
 
-                    filesHelper.AppendToFile(filesHelper.ModelTrainingFile, fileData.ModelData);
-                }
-
-                progress.Increment();
-            }
-
-            Console.WriteLine();
+            Console.WriteLine("Processed.");
         }
 
         /// <summary>

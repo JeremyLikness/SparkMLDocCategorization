@@ -2,6 +2,7 @@
 
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.InteropServices.ComTypes;
 using System.Text;
 using Microsoft.Toolkit.Parsers.Markdown;
 using Microsoft.Toolkit.Parsers.Markdown.Blocks;
@@ -51,8 +52,10 @@ namespace Common
             markdown.Blocks.ForEach(b => result = RecurseBlock(b, result, words, titles));
             result.Words = words.ToString().NormalizeWhiteSpace();
 
-            titles.OrderBy(t => t.level).ThenByDescending(t => t.text.Length).Take(6)
-                .ForEach(t => result.AddHeading(t.text.ExtractWords().Trim()));
+            // de-dup
+            var distinctTitles = titles.Distinct().Where(t => !titles.Any(t2 => t2.text == t.text && t2.level > t.level));
+            distinctTitles.OrderBy(t => t.level).ThenByDescending(t => t.text.Length).Take(6)
+                .ForEach(t => result.AddHeading(t.text));
 
             return result;
         }
@@ -76,7 +79,7 @@ namespace Common
                     var title = header.Inlines.OfType<TextRunInline>().Select(t => t.Text).FirstOrDefault();
                     if (!string.IsNullOrWhiteSpace(title))
                     {
-                        titles.Add((header.HeaderLevel, title));
+                        titles.Add((header.HeaderLevel, title.TitleTrim()));
                     }
 
                     header.Inlines.ForEach(i => candidate = RecurseInline(i, candidate, words, titles));
@@ -108,7 +111,7 @@ namespace Common
                         .Select(c => c.Value).FirstOrDefault();
                     if (!string.IsNullOrWhiteSpace(yTitle))
                     {
-                        titles.Add((0, yTitle));
+                        titles.Add((0, yTitle.TitleTrim()));
                         words.Append(yTitle.ExtractWords());
                     }
 

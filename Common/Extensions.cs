@@ -17,13 +17,36 @@ namespace Common
         public static readonly Regex StripNonAlpha = new Regex(@"[^\w @-]", RegexOptions.Compiled);
 
         /// <summary>
+        /// First good character in a block.
+        /// </summary>
+        private static readonly char[] FirstTitleChars =
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz".ToCharArray();
+
+        /// <summary>
         /// Strips non-alpha and returns "clean" words list.
         /// </summary>
         /// <param name="source">The source text.</param>
         /// <returns>The cleansed text.</returns>
         public static string ExtractWords(this string source)
-            => string.IsNullOrWhiteSpace(source) ? string.Empty :
-            $" {StripNonAlpha.Replace(source, string.Empty)}";
+        {
+            if (string.IsNullOrWhiteSpace(source))
+            {
+                return string.Empty;
+            }
+
+            return StripNonAlpha.Replace(source, string.Empty);
+        }
+
+        /// <summary>
+        /// Trims leading spaces and numerics.
+        /// </summary>
+        /// <param name="title">The title to trim.</param>
+        /// <returns>The trimmed title.</returns>
+        public static string TitleTrim(this string title)
+        {
+            var pos = title.IndexOfAny(FirstTitleChars, 0);
+            return pos > 0 ? title.Substring(pos).Trim() : title.Trim();
+        }
 
         /// <summary>
         /// Turns foo into fooFeaturized.

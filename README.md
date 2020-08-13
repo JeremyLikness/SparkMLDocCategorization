@@ -18,6 +18,10 @@ Each flow through is identified with a unique session tag. For example, `1` migh
 set of documents while `2` points to a different repo. You can specify a file location, but it
 will default to your user local app data directory. The jobs will show the path to the files.
 
+The `runall.cmd` in the root will step through all phases:
+
+`runall 1 c:\source\repo`
+
 ### Build the Spark Data Source
 
 Navigate to the `DocRepoParser` project first.

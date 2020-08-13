@@ -12,7 +12,7 @@ namespace SparkWordsProcessor
         /// <summary>
         /// Set up a reader with the options for a header.
         /// </summary>
-        /// <param name="reader">The <see cref="DataFrameReader"/></param>
+        /// <param name="reader">The <see cref="DataFrameReader"/>.</param>
         /// <returns>The <see cref="DataFrameReader"/> with configured option.</returns>
         public static DataFrameReader HasHeader(this DataFrameReader reader)
         {

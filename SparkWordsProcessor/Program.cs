@@ -1,6 +1,7 @@
 ﻿// Licensed under the MIT License. See LICENSE in the repository root for license information.
 
 using System;
+using System.ComponentModel.Design;
 using System.Linq;
 using Common;
 using Microsoft.Spark.Sql;
@@ -86,103 +87,137 @@ namespace SparkWordsProcessor
             var spark = SparkSession.Builder()
                 .AppName(nameof(SparkWordsProcessor)).GetOrCreate();
 
+            // everything
             var dataFrame = spark.Read().HasHeader().Csv(filesHelper.TempDataFile);
-            var columns = default(FileDataParse)
-                .GroupBy()
-                .Select(Functions.Col)
-                .ToArray();
+
+            var fileCol = nameof(FileDataParse.File).AsColumn();
+
+            // split words and group by count
             var words = dataFrame
 
                 // transform words into an array of words
-                .Select(columns.Append(
+                .Select(
+                    fileCol,
                     Functions.Split(
                         nameof(FileDataParse.Words).AsColumn(), " ")
-                    .Alias(wordList)).ToArray())
+                    .Alias(wordList))
 
                 // flatten into one row per word
-                .Select(columns.Append(
+                .Select(
+                    fileCol,
                     Functions.Explode(
                         wordList.AsColumn())
-                    .Alias(word)).ToArray())
+                    .Alias(word))
 
                 // group by attributes of file plus word
-                .GroupBy(columns.Append(word.AsColumn()).ToArray())
+                .GroupBy(fileCol, Functions.Lower(word.AsColumn()).Alias(word))
 
                 // generate count
                 .Count()
 
                 // order by word count per file descending
-                .OrderBy(nameof(FileDataParse.File).AsColumn(), count.AsColumn().Desc());
+                .OrderBy(fileCol, count.AsColumn().Desc());
 
-            var results = words.Collect();
+            // raw data
+            dataFrame.CreateOrReplaceTempView("docs");
 
-            Console.WriteLine($"Processing data...");
+            // count by word
+            words.CreateOrReplaceTempView("words");
 
-            var fileData = default(FileDataParse);
-            var progress = new ProgressHelper(TimeSpan.FromSeconds(10), Console.Write);
+            // get total word count for document
+            var rollup = spark.Sql("SELECT File, sum(count) as WordCount from words group by File");
+
+            // rollup
+            rollup.CreateOrReplaceTempView("totals");
+
+            // skip stop words
+            static bool IsStopWord(string val) => val.Length < 4 || StopWords.List.Contains(val);
+            spark.Udf().Register<string, bool>(nameof(IsStopWord), IsStopWord);
+
+            var filteredWords = spark.Sql("SELECT * FROM words WHERE NOT IsStopWord(word)");
+            filteredWords.CreateOrReplaceTempView("filtered");
+
+            // top 20 words that aren't stop words
+            var top20 = spark.Sql(
+                "SELECT File, word, count, " +
+                "ROW_NUMBER() OVER " +
+                "   (PARTITION BY File ORDER BY count DESC) As RowNumber " +
+                "FROM filtered");
+
+            top20.CreateOrReplaceTempView("topwords");
+
+            // calculate reading time
+            static string CalculateReadingTime(int count)
+            {
+                var totalTime = count / WordsPerMinute;
+                return ParseTime(totalTime);
+            }
+
+            spark.Udf().Register<int, string>(nameof(CalculateReadingTime), CalculateReadingTime);
+
+            // main query, max 20 words per file
+            var join = spark.Sql(
+                "SELECT distinct d.File, d.Title, d.Subtitle1, d.Subtitle2, d.Subtitle3, d.Subtitle4, d.Subtitle5, " +
+                "w.word, w.count, w.RowNumber, " +
+                "t.WordCount " +
+                "from docs d inner join topwords w on d.File = w.File " +
+                "inner join totals t on d.File = t.File " +
+                "where w.RowNumber <= 20");
+
+            var cols = new[]
+            {
+                fileCol,
+                nameof(FileDataParse.Title).AsColumn(),
+                nameof(FileDataParse.Subtitle1).AsColumn(),
+                nameof(FileDataParse.Subtitle2).AsColumn(),
+                nameof(FileDataParse.Subtitle3).AsColumn(),
+                nameof(FileDataParse.Subtitle4).AsColumn(),
+                nameof(FileDataParse.Subtitle5).AsColumn(),
+                nameof(FileDataParse.WordCount).AsColumn(),
+            };
+
+            // roll-up words into single "top 20" field
+            var final = join.GroupBy(cols)
+                .Agg(Functions.CollectList(word.AsColumn()).Alias(nameof(FileDataParse.Top20Words)))
+                .Select(cols
+                    .Append(Functions.ConcatWs(" ", nameof(FileDataParse.Top20Words).AsColumn())
+                        .Alias(nameof(FileDataParse.Top20Words)))
+                    .Append(
+                    Functions.CallUDF(
+                        nameof(CalculateReadingTime),
+                        nameof(FileDataParse.WordCount).AsColumn())
+                    .Alias(nameof(FileDataParse.ReadingTime))).ToArray());
+
+            Console.WriteLine("Processing data...");
 
             filesHelper.NewModelSession();
 
-            int topWordCount = TopWordCount;
+            var progress = new ProgressHelper(TimeSpan.FromSeconds(5), Console.Write);
 
-            var first = true;
-
-            foreach (var result in results)
+            foreach (var result in final.Collect())
             {
-                if (first)
+                var title = result.GetAs<string>(nameof(FileDataParse.Title));
+
+                if (!string.IsNullOrWhiteSpace(title))
                 {
-                    first = false;
-                    Console.Write("Spark processing complete. Parsing results");
-                }
-
-                progress.Increment();
-
-                var file = result.GetAs<string>(nameof(FileDataParse.File));
-                if (fileData.File != file)
-                {
-                    if (!string.IsNullOrWhiteSpace(fileData.File))
+                    var fileData = new FileDataParse
                     {
-                        fileData.ReadingTime = ParseTime(fileData.WordCount / WordsPerMinute);
-                        filesHelper.AppendToFile(filesHelper.ModelTrainingFile, fileData.ModelData);
-                    }
-
-                    fileData = new FileDataParse
-                    {
-                        File = file,
-                        Title = result.GetAs<string>(nameof(FileDataParse.Title)).ExtractWords().Trim(),
+                        File = result.GetAs<string>(nameof(FileDataParse.File)),
+                        Title = title.ExtractWords().Trim(),
                         Subtitle1 = result.GetAs<string>(nameof(FileDataParse.Subtitle1)).ExtractWords().Trim(),
                         Subtitle2 = result.GetAs<string>(nameof(FileDataParse.Subtitle2)).ExtractWords().Trim(),
                         Subtitle3 = result.GetAs<string>(nameof(FileDataParse.Subtitle3)).ExtractWords().Trim(),
                         Subtitle4 = result.GetAs<string>(nameof(FileDataParse.Subtitle4)).ExtractWords().Trim(),
                         Subtitle5 = result.GetAs<string>(nameof(FileDataParse.Subtitle5)).ExtractWords().Trim(),
-                        Top20Words = string.Empty,
-                        WordCount = result.GetAs<int>(count),
+                        Top20Words = result.GetAs<string>(nameof(FileDataParse.Top20Words)).ExtractWords().Trim(),
+                        WordCount = result.GetAs<int>(nameof(FileDataParse.WordCount)),
+                        ReadingTime = result.GetAs<string>(nameof(FileDataParse.ReadingTime)),
                     };
 
-                    topWordCount = TopWordCount;
-                }
-                else
-                {
-                    var wordCount = result.GetAs<int>(count);
-                    fileData.WordCount += wordCount;
+                    filesHelper.AppendToFile(filesHelper.ModelTrainingFile, fileData.ModelData);
                 }
 
-                if (topWordCount > 0)
-                {
-                    var currentWord = result.GetAs<string>(word).Trim();
-                    if (currentWord.Length > 4 && !StopWords.List.Contains(currentWord.ToLowerInvariant()))
-                    {
-                        fileData.Top20Words = string.IsNullOrWhiteSpace(fileData.Top20Words) ?
-                            currentWord : $"{fileData.Top20Words} {currentWord}";
-                        topWordCount--;
-                    }
-                }
-            }
-
-            if (!string.IsNullOrWhiteSpace(fileData.Title))
-            {
-                fileData.ReadingTime = ParseTime(fileData.WordCount / WordsPerMinute);
-                filesHelper.AppendToFile(filesHelper.ModelTrainingFile, fileData.ModelData);
+                progress.Increment();
             }
 
             Console.WriteLine();

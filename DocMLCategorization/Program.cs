@@ -128,6 +128,10 @@ namespace DocMLCategorization
             Console.WriteLine("Training the optimal model...");
             var optimalModel = optimalClusterPipeline.Fit(dataToTrain);
 
+            Console.WriteLine("Saving the model...");
+            filesHelper.StreamModelToDisk(stream => context.Model.Save(optimalModel, dataToTrain.Schema, stream));
+            Console.WriteLine($"Model saved to {filesHelper.TrainedModel}");
+
             Console.WriteLine("Running predictions...");
             var optimalPredictions = optimalModel.Transform(dataToTrain);
             Console.WriteLine("Iterating predictions...");

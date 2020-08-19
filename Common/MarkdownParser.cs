@@ -108,12 +108,20 @@ namespace Common
                         .ForEach(i => candidate = RecurseInline(i, candidate, words, titles));
                     break;
                 case YamlHeaderBlock yaml:
-                    var yTitle = yaml.Children.Where(c => c.Key == "title")
+                    var yTitle = yaml.Children.Where(c => c.Key.ToLowerInvariant().Trim() == "title")
                         .Select(c => c.Value).FirstOrDefault();
                     if (!string.IsNullOrWhiteSpace(yTitle))
                     {
                         titles.Add((0, yTitle.TitleTrim()));
                         words.Append(yTitle.ExtractWords());
+                    }
+
+                    var yDescription = yaml.Children.Where(c => c.Key.ToLowerInvariant().Trim() == "description")
+                        .Select(c => c.Value).FirstOrDefault();
+                    if (!string.IsNullOrWhiteSpace(yDescription))
+                    {
+                        titles.Add((2, yDescription.TitleTrim()));
+                        words.Append(yDescription.ExtractWords());
                     }
 
                     break;

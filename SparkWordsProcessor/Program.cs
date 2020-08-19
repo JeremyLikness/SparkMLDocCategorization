@@ -1,7 +1,6 @@
 ﻿// Licensed under the MIT License. See LICENSE in the repository root for license information.
 
 using System;
-using System.ComponentModel.Design;
 using System.Linq;
 using Common;
 using Microsoft.Spark.Sql;
@@ -81,19 +80,34 @@ namespace SparkWordsProcessor
             const string wordList = nameof(wordList);
             const string word = nameof(word);
             const string count = nameof(count);
+            const string docFrequency = nameof(docFrequency);
+            const string total = nameof(total);
+            const string inverseDocFrequency = nameof(inverseDocFrequency);
+            const string termFreq_inverseDocFreq = nameof(termFreq_inverseDocFreq);
 
             Console.WriteLine("Starting Spark job to analyze words...");
 
             var spark = SparkSession.Builder()
-                .AppName(nameof(SparkWordsProcessor)).GetOrCreate();
+                .AppName(nameof(SparkWordsProcessor))
+                .GetOrCreate();
+
+            spark.SparkContext.SetLogLevel("ERROR");
+
+            filesHelper.NewModelSession();
 
             // everything
-            var dataFrame = spark.Read().HasHeader().Csv(filesHelper.TempDataFile);
+            var docs = spark.Read().HasHeader().Csv(filesHelper.TempDataFile);
 
+            docs.CreateOrReplaceTempView(nameof(docs));
+
+            // all docs in corpus
+            var totalDocs = docs.Count();
+
+            // easy reference
             var fileCol = nameof(FileDataParse.File).AsColumn();
 
             // split words and group by count
-            var words = dataFrame
+            var words = docs
 
                 // transform words into an array of words
                 .Select(
@@ -107,7 +121,10 @@ namespace SparkWordsProcessor
                     fileCol,
                     Functions.Explode(
                         wordList.AsColumn())
-                    .Alias(word))
+                    .Alias(word));
+
+            // get frequency of word per document
+            var termFrequency = words
 
                 // group by attributes of file plus word
                 .GroupBy(fileCol, Functions.Lower(word.AsColumn()).Alias(word))
@@ -118,41 +135,66 @@ namespace SparkWordsProcessor
                 // order by word count per file descending
                 .OrderBy(fileCol, count.AsColumn().Desc());
 
-            // raw data
-            dataFrame.CreateOrReplaceTempView("docs");
-
             // count by word
-            words.CreateOrReplaceTempView("words");
+            termFrequency.CreateOrReplaceTempView(nameof(termFrequency));
+
+            // now count frequency of word across all documents
+            var documentFrequency = words
+                .GroupBy(Functions.Lower(word.AsColumn()).Alias(word))
+                .Agg(Functions.CountDistinct(fileCol).Alias(docFrequency));
+
+            documentFrequency.CreateOrReplaceTempView(nameof(documentFrequency));
+
+            static double CalculateIdf(int docFrequency, int totalDocuments) =>
+                Math.Log(totalDocuments + 1) / (docFrequency + 1);
+            spark.Udf().Register<int, int, double>(nameof(CalculateIdf), CalculateIdf);
+
+            var idfPrep = documentFrequency.Select(
+                word.AsColumn(),
+                docFrequency.AsColumn())
+                .WithColumn(total, Functions.Lit(totalDocs))
+                .WithColumn(
+                inverseDocFrequency,
+                Functions.CallUDF(
+                    nameof(CalculateIdf),
+                    docFrequency.AsColumn(),
+                    total.AsColumn()));
+            idfPrep.CreateOrReplaceTempView(nameof(documentFrequency));
+
+            var idfJoin = spark.Sql($"SELECT t.File, d.word, d.{docFrequency}, d.{inverseDocFrequency}, t.count, d.{inverseDocFrequency} * t.count as {termFreq_inverseDocFreq} " +
+                $"from {nameof(documentFrequency)} d inner join {nameof(termFrequency)} t " +
+                " on t.word = d.word");
+            idfJoin.CreateOrReplaceTempView(nameof(idfJoin));
 
             // get total word count for document
-            var rollup = spark.Sql("SELECT File, sum(count) as WordCount from words group by File");
+            var rollup = spark.Sql($"SELECT File, sum(count) as WordCount from {nameof(termFrequency)} group by File");
 
             // rollup
-            rollup.CreateOrReplaceTempView("totals");
+            rollup.CreateOrReplaceTempView(nameof(rollup));
 
             // skip stop words
             static bool IsStopWord(string val) => val.Length < 4 || StopWords.List.Contains(val);
             spark.Udf().Register<string, bool>(nameof(IsStopWord), IsStopWord);
 
-            var filteredWords = spark.Sql("SELECT * FROM words WHERE NOT IsStopWord(word)");
-            filteredWords.CreateOrReplaceTempView("filtered");
+            var filteredWords = spark.Sql($"SELECT File, word, {termFreq_inverseDocFreq} FROM {nameof(idfJoin)} WHERE NOT IsStopWord(word)");
+            filteredWords.CreateOrReplaceTempView(nameof(filteredWords));
 
             // top 20 words that aren't stop words
             var top20 = spark.Sql(
-                "SELECT File, word, count, " +
+                $"SELECT File, word, {termFreq_inverseDocFreq}, " +
                 "ROW_NUMBER() OVER " +
-                "   (PARTITION BY File ORDER BY count DESC) As RowNumber " +
-                "FROM filtered");
+                $"   (PARTITION BY File ORDER BY {termFreq_inverseDocFreq} DESC) As RowNumber " +
+                $"FROM {nameof(filteredWords)}");
 
-            top20.CreateOrReplaceTempView("topwords");
+            top20.CreateOrReplaceTempView(nameof(top20));
 
             // main query, max 20 words per file
             var join = spark.Sql(
                 "SELECT distinct d.File, d.Title, d.Subtitle1, d.Subtitle2, d.Subtitle3, d.Subtitle4, d.Subtitle5, " +
-                "w.word, w.count, w.RowNumber, " +
+                "w.word, w.RowNumber, " +
                 "t.WordCount " +
-                "from docs d inner join topwords w on d.File = w.File " +
-                "inner join totals t on d.File = t.File " +
+                $"from {nameof(docs)} d inner join {nameof(top20)} w on d.File = w.File " +
+                $"inner join {nameof(rollup)} t on d.File = t.File " +
                 "where w.RowNumber <= 20");
 
             var cols = new[]
@@ -186,13 +228,13 @@ namespace SparkWordsProcessor
                     Functions.CallUDF(
                         nameof(CalculateReadingTime),
                         nameof(FileDataParse.WordCount).AsColumn())
-                    .Alias(nameof(FileDataParse.ReadingTime))).ToArray());
+                    .Alias(nameof(FileDataParse.ReadingTime))).ToArray())
+                .OrderBy(fileCol);
 
             Console.WriteLine("Processing data...");
 
-            filesHelper.NewModelSession();
-
-            final.Collect()
+            final
+                .Collect()
                 .Where(row => !string.IsNullOrWhiteSpace(row.GetColumnValue(f => f.Title)))
                 .Select(row => new FileDataParse
                 {

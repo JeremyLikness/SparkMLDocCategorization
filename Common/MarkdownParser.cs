@@ -54,6 +54,7 @@ namespace Common
 
             // de-dup
             var distinctTitles = titles.Distinct().Where(t => !titles.Any(t2 => t2.text == t.text && t2.level > t.level));
+
             distinctTitles.OrderBy(t => t.level).ThenByDescending(t => t.text.Length).Take(6)
                 .ForEach(t => result.AddHeading(t.text));
 
@@ -148,6 +149,11 @@ namespace Common
                     link.Inlines.ForEach(i => candidate = RecurseInline(i, candidate, words, titles));
                     break;
                 case IInlineContainer container:
+                    if (container is CodeInline)
+                    {
+                        break;
+                    }
+
                     container.Inlines.ForEach(
                         cInline => candidate = RecurseInline(cInline, candidate, words, titles));
                     break;

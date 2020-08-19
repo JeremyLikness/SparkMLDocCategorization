@@ -204,6 +204,7 @@ namespace Common
                 nameof(Top20Words),
                 nameof(WordCount),
                 nameof(ReadingTime),
+                nameof(Words),
             }).Select(h => $"\"{h}\"").ToArray();
 
         /// <summary>
@@ -223,6 +224,7 @@ namespace Common
                 Quote(Top20Words),
                 WordCount.ToString(),
                 Quote(ReadingTime),
+                Quote(Words),
             };
     }
 }

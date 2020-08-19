@@ -47,7 +47,7 @@ Navigate to the `DocMLCategorization` project.
 
 To train _and_use the model, type:
 
-`dotnet run 1 trainandpredict`
+`dotnet run 1`
 
 Open the generated file and see how well the tool categorized your documents!
 

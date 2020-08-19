@@ -13,4 +13,4 @@ call runjob.cmd %1
 
 cd ../../../../DocMLCategorization
 
-dotnet run %1 trainandpredict
+dotnet run %1

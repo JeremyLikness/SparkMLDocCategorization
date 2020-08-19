@@ -47,17 +47,9 @@ namespace DocRepoParser
 
         private static void ProcessFiles()
         {
-            Console.WriteLine("Warning: the existing input file, if it exists, will be overwritten.");
-            Console.WriteLine("Hit ENTER to cancel or type 'go' (without quotes) to continue.");
-
-            if (!Console.ReadLine().ToLowerInvariant().StartsWith("go"))
-            {
-                return;
-            }
-
             var files = filesHelper.RecurseFiles(
                 filesHelper.PathToTrainingRepo,
-                file => file.EndsWith(".md")).ToList();
+                file => file.EndsWith(".md")).ToList().Distinct().OrderBy(f => f);
 
             var success = 0;
             var total = files.Count();
@@ -66,18 +58,13 @@ namespace DocRepoParser
 
             var progress = new ProgressHelper(total, Console.Write);
 
+            filesHelper.NewTempSession();
+
             foreach (var file in files)
             {
-                if (progress.Index == 0)
-                {
-                    filesHelper.NewTempSession();
-                }
-
                 progress.Increment();
 
-                var fileOnly = file.file.Split("\\")[^1];
-                var fileName = $"{file.level}-{fileOnly}";
-                var fileParse = MarkdownParser.Parse(fileName, filesHelper.ReadFile(file.file));
+                var fileParse = MarkdownParser.Parse(file.fileName, filesHelper.ReadFile(file.file));
                 if (!string.IsNullOrWhiteSpace(fileParse.File) &&
                     !string.IsNullOrWhiteSpace(fileParse.Title))
                 {

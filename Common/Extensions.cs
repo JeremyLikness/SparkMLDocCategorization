@@ -14,7 +14,7 @@ namespace Common
         /// <summary>
         /// Regular expression to strip non-alpha content.
         /// </summary>
-        public static readonly Regex StripNonAlpha = new Regex(@"[^\w @-]", RegexOptions.Compiled);
+        public static readonly Regex StripNonAlpha = new Regex(@"[^\w ]", RegexOptions.Compiled);
 
         /// <summary>
         /// First good character in a block.
@@ -34,7 +34,7 @@ namespace Common
                 return string.Empty;
             }
 
-            return StripNonAlpha.Replace(source, string.Empty);
+            return $" {StripNonAlpha.Replace(source, " ")}";
         }
 
         /// <summary>

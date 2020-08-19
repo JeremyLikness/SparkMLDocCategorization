@@ -1,9 +1,11 @@
 ﻿// Licensed under the MIT License. See LICENSE in the repository root for license information.
 
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using Common;
 using Microsoft.ML;
+using Microsoft.ML.Trainers;
 
 namespace DocMLCategorization
 {
@@ -15,21 +17,6 @@ namespace DocMLCategorization
         private static FilesHelper filesHelper;
 
         /// <summary>
-        /// Current mode.
-        /// </summary>
-        private static Modes mode;
-
-        /// <summary>
-        /// Modes to run with.
-        /// </summary>
-        private enum Modes
-        {
-            Train,
-            Predict,
-            TrainAndPredict,
-        }
-
-        /// <summary>
         /// Main program.
         /// </summary>
         /// <param name="args">Arguments.</param>
@@ -37,11 +24,11 @@ namespace DocMLCategorization
         {
             Console.WriteLine("Doc ML Categorization.");
             Console.WriteLine("Predicts categories documents should belong to.");
-            if (args.Length < 2 || args.Length > 3)
+            if (args.Length < 1 || args.Length > 2)
             {
                 Console.WriteLine("Usage:");
                 Console.Write($"dotnet run {typeof(Program).Assembly.Location.Split("\\")[^1]}");
-                Console.Write(" <sessionTag> <train|predict|trainandpredict> [path-to-cache]");
+                Console.Write(" <sessionTag> [path-to-cache]");
                 return;
             }
 
@@ -50,37 +37,18 @@ namespace DocMLCategorization
                 Console.WriteLine($"Session tag must be an integer! Value {args[0]} is invalid!");
             }
 
-            if (Enum.TryParse(args[1].Trim(), ignoreCase: true, out Modes result))
-            {
-                mode = result;
-            }
-            else
-            {
-                Console.WriteLine($"Invalid mode passed as second argument: {args[1].Trim()}");
-                Console.WriteLine("Valid modes are: train, predict, or trainandpredict.");
-                return;
-            }
-
-            if (args.Length == 2)
+            if (args.Length == 1)
             {
                 filesHelper = new FilesHelper(tag);
             }
             else
             {
-                filesHelper = new FilesHelper(tag, cache: args[2]);
+                filesHelper = new FilesHelper(tag, cache: args[1]);
             }
 
             Console.WriteLine($"Initialized cache to {filesHelper.PathToCache}");
 
-            if (mode == Modes.Train || mode == Modes.TrainAndPredict)
-            {
-                Train();
-            }
-
-            if (mode == Modes.Predict || mode == Modes.TrainAndPredict)
-            {
-                Predict();
-            }
+            Train();
         }
 
         /// <summary>
@@ -89,6 +57,8 @@ namespace DocMLCategorization
         private static void Train()
         {
             string features = nameof(features);
+            const int lowCategory = 2;
+            const int highCategory = 20;
 
             var context = new MLContext(seed: 0);
 
@@ -98,13 +68,6 @@ namespace DocMLCategorization
                 hasHeader: true,
                 allowQuoting: true,
                 separatorChar: ',');
-
-            // setup options
-            var options = new Microsoft.ML.Trainers.KMeansTrainer.Options
-            {
-                FeatureColumnName = features,
-                NumberOfClusters = 20,
-            };
 
             // turn the data in vectors that represent the feature
             var pipeline = context.Transforms
@@ -123,59 +86,98 @@ namespace DocMLCategorization
                     nameof(FileData.Subtitle3).Featurized(),
                     nameof(FileData.Subtitle4).Featurized(),
                     nameof(FileData.Subtitle5).Featurized(),
-                    nameof(FileData.Top20Words).Featurized()))
-                .Append(context.Clustering.Trainers.KMeans(options));
+                    nameof(FileData.Top20Words).Featurized()));
 
-            Console.WriteLine("Training the model...");
-            var model = pipeline.Fit(dataToTrain);
-            Console.WriteLine("Trained!");
+            var distances = new Dictionary<int, double>();
 
-            filesHelper.StreamModelToDisk(stream => context.Model.Save(model, dataToTrain.Schema, stream));
-            Console.WriteLine($"Model saved to {filesHelper.TrainedModel}");
-        }
+            for (var categories = lowCategory; categories <= highCategory; categories += 1)
+            {
+                Console.WriteLine($"Testing for {categories} categories...");
 
-        /// <summary>
-        /// Run predictions.
-        /// </summary>
-        private static void Predict()
-        {
-            var context = new MLContext(seed: 0);
+                var options = new KMeansTrainer.Options
+                {
+                    FeatureColumnName = features,
+                    NumberOfClusters = categories,
+                };
 
-            ITransformer trainedModel = null;
+                var clusterPipeline = pipeline.Append(context.Clustering.Trainers.KMeans(options));
 
-            filesHelper.StreamModelFromDisk(stream =>
-                trainedModel = context.Model.Load(stream, out var modelSchema));
-            Console.WriteLine($"Model loaded from {filesHelper.TrainedModel}");
+                Console.WriteLine("Training the model...");
+                var model = clusterPipeline.Fit(dataToTrain);
+                Console.WriteLine("Trained!");
 
-            var predictionEngine = context.Model.CreatePredictionEngine<FileData, ClusterPrediction>(trainedModel);
+                Console.WriteLine("Testing predictions...");
+                var predictions = model.Transform(dataToTrain);
+                var metrics = context.Clustering.Evaluate(predictions);
+                Console.WriteLine($"Average distance for {categories} is {metrics.AverageDistance}");
+                distances.Add(categories, metrics.AverageDistance);
+            }
 
-            Console.WriteLine("Loading documents for prediction...");
+            var categoriesToUse = distances.OrderBy(d => d.Value).First().Key;
 
-            IDataView data = context.Data.LoadFromTextFile<FileData>(
-                filesHelper.ModelTrainingFile,
-                separatorChar: ',',
-                hasHeader: true);
+            Console.WriteLine($"Optimal categories is {categoriesToUse}");
 
-            Console.WriteLine($"Loaded.");
+            var finalOptions = new KMeansTrainer.Options
+            {
+                FeatureColumnName = features,
+                NumberOfClusters = categoriesToUse,
+            };
+
+            var optimalClusterPipeline = pipeline.Append(context.Clustering.Trainers.KMeans(finalOptions));
+
+            Console.WriteLine("Training the optimal model...");
+            var optimalModel = optimalClusterPipeline.Fit(dataToTrain);
 
             Console.WriteLine("Running predictions...");
-            var predictions = trainedModel.Transform(data);
+            var optimalPredictions = optimalModel.Transform(dataToTrain);
             Console.WriteLine("Iterating predictions...");
 
-            var rows = context.Data.CreateEnumerable<FileDataLabel>(predictions, reuseRowObject: false);
+            var finalRows = context.Data.CreateEnumerable<FileDataLabel>(optimalPredictions, reuseRowObject: false);
+
+            var categoryMatrix = new CategoryMatrix();
 
             filesHelper.NewPredictionSession();
 
-            var progress = new ProgressHelper(TimeSpan.FromSeconds(5), Console.Write);
+            var totalInputs = filesHelper.GetModelInputCount();
 
-            foreach (var row in rows)
+            var progress = new ProgressHelper(totalInputs, Console.Write);
+
+            var summary = new Dictionary<uint, List<string>>();
+
+            foreach (var row in finalRows)
             {
                 progress.Increment();
+                if (!summary.ContainsKey(row.PredictedLabel))
+                {
+                    summary.Add(row.PredictedLabel, new List<string>());
+                }
+
+                summary[row.PredictedLabel].Add(row.Title);
+
+                var wordMatrix = categoryMatrix[row.PredictedLabel];
+
+                wordMatrix.ParseWords(row.Top20Words);
+                wordMatrix.ParseWords(row.Title, true);
+
                 filesHelper.AppendToFile(filesHelper.CategorizedList, row.Data);
             }
 
+            var summaryText = new List<string>();
+
+            foreach (var category in summary.Keys.OrderBy(k => k))
+            {
+                summaryText.Add($"Category {category}: {categoryMatrix.GetCategoryTitle(category)}");
+                foreach (var title in summary[category].OrderBy(t => t))
+                {
+                    summaryText.Add($"\t{title}");
+                }
+            }
+
+            filesHelper.WriteCategorySummary(summaryText);
+
             Console.WriteLine();
             Console.WriteLine($"Done. Wrote predicted categories to {filesHelper.CategorizedList}");
+            Console.WriteLine($"Wrote summary to {filesHelper.SummaryText}");
         }
     }
 }

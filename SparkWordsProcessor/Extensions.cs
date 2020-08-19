@@ -51,6 +51,6 @@ namespace SparkWordsProcessor
         /// </summary>
         /// <param name="str">The string to transform.</param>
         /// <returns>The <see cref="Column"/>.</returns>
-            public static Column AsColumn(this string str) => Functions.Col(str);
+        public static Column AsColumn(this string str) => Functions.Col(str);
     }
 }

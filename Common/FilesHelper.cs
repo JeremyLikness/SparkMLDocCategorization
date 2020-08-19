@@ -3,6 +3,8 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
+using System.Runtime.InteropServices;
 
 namespace Common
 {
@@ -20,6 +22,8 @@ namespace Common
         public FilesHelper(int sessionTag, string trainingRepo = null, string cache = null)
         {
             PathToTrainingRepo = trainingRepo;
+
+            SessionTag = sessionTag;
 
             if (!string.IsNullOrWhiteSpace(PathToTrainingRepo))
             {
@@ -41,16 +45,28 @@ namespace Common
 
             EnsureExists(PathToCache);
 
+            FeaturesFile = Path.Combine(PathToCache, "spark-features.json");
             TempDataFile = Path.Combine(PathToCache, "spark-docs-input.csv");
             ModelTrainingFile = Path.Combine(PathToCache, "spark-model-input.csv");
             TrainedModel = Path.Combine(PathToCache, "ml-clustering-model.zip");
             CategorizedList = Path.Combine(PathToCache, "categorized.csv");
+            SummaryText = Path.Combine(PathToCache, "summary.txt");
         }
+
+        /// <summary>
+        /// Gets the session tag the helper is scoped to.
+        /// </summary>
+        public int SessionTag { get; private set; }
 
         /// <summary>
         /// Gets the name of the temporary data file for spark processing.
         /// </summary>
         public string TempDataFile { get; private set; }
+
+        /// <summary>
+        /// Gets the features file for spark processing.
+        /// </summary>
+        public string FeaturesFile { get; private set; }
 
         /// <summary>
         /// Gets the name of the file for training the ML.NET model.
@@ -71,6 +87,11 @@ namespace Common
         /// Gets the path to the categorized list.
         /// </summary>
         public string CategorizedList { get; private set; }
+
+        /// <summary>
+        /// Gets the path to the summary text.
+        /// </summary>
+        public string SummaryText { get; private set; }
 
         /// <summary>
         /// Gets the path to the cache.
@@ -138,37 +159,43 @@ namespace Common
         }
 
         /// <summary>
+        /// Gets the count of items in the model training file.
+        /// </summary>
+        /// <returns>The count of items.</returns>
+        public int GetModelInputCount() =>
+            File.ReadAllLines(ModelTrainingFile).Count();
+
+        /// <summary>
         /// Writes a processed document to the cache.
         /// </summary>
         /// <param name="parse">The <see cref="FileDataParse"/> to persist.</param>
-        public void WriteToTempFiles(FileDataParse parse)
-        {
+        public void WriteToTempFiles(FileDataParse parse) =>
             File.AppendAllText(TempDataFile, parse.TempData);
-        }
 
         /// <summary>
         /// Starts a new session and overwrites the existing temp file.
         /// </summary>
-        public void NewTempSession()
-        {
-            File.AppendAllText(TempDataFile, default(FileDataParse).TempHeader);
-        }
+        public void NewTempSession() =>
+            File.WriteAllText(TempDataFile, default(FileDataParse).TempHeader);
 
         /// <summary>
         /// Starts a new session and overwrites the existing model file.
         /// </summary>
-        public void NewModelSession()
-        {
+        public void NewModelSession() =>
             File.WriteAllText(ModelTrainingFile, default(FileDataParse).ModelHeader);
-        }
 
         /// <summary>
         /// Starts a new session and overwrites the existing model file.
         /// </summary>
-        public void NewPredictionSession()
-        {
+        public void NewPredictionSession() =>
             File.WriteAllText(CategorizedList, new FileDataLabel().Headers);
-        }
+
+        /// <summary>
+        /// Writes out the summary of auto-categorized documents.
+        /// </summary>
+        /// <param name="summaryText">The text to write.</param>
+        public void WriteCategorySummary(IEnumerable<string> summaryText) =>
+            File.WriteAllLines(SummaryText, summaryText);
 
         /// <summary>
         /// Recurses the files with a conditional filter. Returns the
@@ -177,14 +204,31 @@ namespace Common
         /// <param name="root">The root directory to begin traversal.</param>
         /// <param name="filter">The filter for files.</param>
         /// <param name="level">The level.</param>
+        /// <param name="top">The top directory.</param>
         /// <returns>The list of recursed files with level.</returns>
-        public IEnumerable<(int level, string file)> RecurseFiles(
+        public IEnumerable<(int level, string file, string fileName)> RecurseFiles(
             string root,
             Func<string, bool> filter = null,
-            int level = 1)
+            int level = 1,
+            string top = null)
         {
             Extensions.CheckNotNull(root, nameof(root));
             filter = filter ?? (str => true);
+
+            string FileName(string file)
+            {
+                var fileOnly = file.Contains("\\") ? file.Split('\\')
+                    : file.Split('/');
+                var baseFileName = fileOnly[fileOnly.Length - 1];
+                if (top == null)
+                {
+                    return baseFileName;
+                }
+
+                var start = root.IndexOf(top) + top.Length + 1;
+                var relative = root.Substring(start);
+                return $"{relative.Replace("\\", "-").Replace("/", "-")}-{baseFileName}";
+            }
 
             if (!Directory.Exists(root))
             {
@@ -195,13 +239,19 @@ namespace Common
             {
                 if (filter(file))
                 {
-                    yield return (level, file);
+                    yield return (level, file, FileName(file));
                 }
             }
 
             foreach (var dir in Directory.EnumerateDirectories(root))
             {
-                foreach (var subFile in RecurseFiles(dir, filter, level + 1))
+                var info = new DirectoryInfo(dir);
+                if (info.Name.StartsWith("."))
+                {
+                    continue;
+                }
+
+                foreach (var subFile in RecurseFiles(dir, filter, level + 1, top ?? root))
                 {
                     yield return subFile;
                 }

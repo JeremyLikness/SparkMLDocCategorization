@@ -67,7 +67,13 @@ namespace SparkWordsProcessor
                 Console.WriteLine($"Could not find input file: {filesHelper.TempDataFile}.");
             }
 
+            var spark = SparkSession.Builder()
+                .AppName(nameof(SparkWordsProcessor))
+                .GetOrCreate();
+
             RunJob();
+
+            spark.Stop();
 
             Console.WriteLine($"Successfully generated model training file to {filesHelper.ModelTrainingFile}.");
         }
@@ -87,11 +93,7 @@ namespace SparkWordsProcessor
 
             Console.WriteLine("Starting Spark job to analyze words...");
 
-            var spark = SparkSession.Builder()
-                .AppName(nameof(SparkWordsProcessor))
-                .GetOrCreate();
-
-            spark.SparkContext.SetLogLevel("ERROR");
+            var spark = SparkSession.Active();
 
             filesHelper.NewModelSession();
 

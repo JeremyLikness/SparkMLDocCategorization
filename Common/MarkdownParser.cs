@@ -2,8 +2,8 @@
 
 using System.Collections.Generic;
 using System.Linq;
-using System.Runtime.InteropServices.ComTypes;
 using System.Text;
+using System.Text.RegularExpressions;
 using Microsoft.Toolkit.Parsers.Markdown;
 using Microsoft.Toolkit.Parsers.Markdown.Blocks;
 using Microsoft.Toolkit.Parsers.Markdown.Inlines;
@@ -15,6 +15,11 @@ namespace Common
     /// </summary>
     public class MarkdownParser
     {
+        /// <summary>
+        /// Skip current block? (Used for code blocks).
+        /// </summary>
+        private bool skip = false;
+
         /// <summary>
         /// Parse the contents of a markdown document.
         /// </summary>
@@ -50,7 +55,12 @@ namespace Common
             var titles = new List<(int level, string text)>();
             var words = new StringBuilder();
             markdown.Blocks.ForEach(b => result = RecurseBlock(b, result, words, titles));
+
+            // first pass at normalization
             result.Words = words.ToString().NormalizeWhiteSpace();
+
+            // now remove words with camelcasing
+            result.Words = string.Join(" ", result.Words.Split(' ').Where(w => w.Count(ch => char.IsUpper(ch)) <= 1));
 
             // de-dup
             var distinctTitles = titles.Distinct().Where(t => !titles.Any(t2 => t2.text == t.text && t2.level > t.level));
@@ -74,8 +84,12 @@ namespace Common
             StringBuilder words,
             List<(int level, string title)> titles)
         {
+            skip = false;
             switch (block)
             {
+                case CodeBlock codeBlock:
+                    skip = true;
+                    break;
                 case HeaderBlock header:
                     var title = header.Inlines.OfType<TextRunInline>().Select(t => t.Text).FirstOrDefault();
                     if (!string.IsNullOrWhiteSpace(title))
@@ -88,7 +102,13 @@ namespace Common
                 case LinkReferenceBlock link:
                     if (link.Tooltip != null)
                     {
-                        words.Append(link.Tooltip.ExtractWords());
+                        var linkWords = link.Tooltip.ExtractWords();
+
+                        // single word is more likely to be an API instead of a phrase
+                        if (linkWords.HasMoreThanOneWord())
+                        {
+                            words.Append(linkWords);
+                        }
                     }
 
                     break;
@@ -151,7 +171,11 @@ namespace Common
                 case MarkdownLinkInline link:
                     if (!string.IsNullOrWhiteSpace(link.Tooltip))
                     {
-                        words.Append(link.Tooltip.ExtractWords());
+                        var linkWords = link.Tooltip.ExtractWords();
+                        if (linkWords.HasMoreThanOneWord())
+                        {
+                            words.Append(linkWords);
+                        }
                     }
 
                     link.Inlines.ForEach(i => candidate = RecurseInline(i, candidate, words, titles));
@@ -168,12 +192,16 @@ namespace Common
                 case HyperlinkInline hyper:
                     if (!string.IsNullOrWhiteSpace(hyper.Text))
                     {
-                        words.Append(hyper.Text.ExtractWords());
+                        var hyperTextWords = hyper.Text.ExtractWords();
+                        if (hyperTextWords.HasMoreThanOneWord())
+                        {
+                            words.Append(hyperTextWords);
+                        }
                     }
 
                     break;
                 case TextRunInline textRun:
-                    if (!string.IsNullOrWhiteSpace(textRun.Text))
+                    if (!skip && !string.IsNullOrWhiteSpace(textRun.Text))
                     {
                         words.Append(textRun.Text.ExtractWords());
                     }

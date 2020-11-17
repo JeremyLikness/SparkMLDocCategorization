@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.RegularExpressions;
 
 namespace Common
@@ -14,13 +15,20 @@ namespace Common
         /// <summary>
         /// Regular expression to strip non-alpha content.
         /// </summary>
-        public static readonly Regex StripNonAlpha = new Regex(@"[^\w ]", RegexOptions.Compiled);
+        public static readonly Regex StripNonAlpha = new Regex(@"[^a-zA-Z']", RegexOptions.Compiled);
 
         /// <summary>
         /// First good character in a block.
         /// </summary>
         private static readonly char[] FirstTitleChars =
             "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz".ToCharArray();
+
+        /// <summary>
+        /// Has more than one word.
+        /// </summary>
+        /// <param name="str">The string to check.</param>
+        /// <returns>A value indicating whether the string has more than one word.</returns>
+        public static bool HasMoreThanOneWord(this string str) => str.Count(ch => ch == ' ') > 1;
 
         /// <summary>
         /// Strips non-alpha and returns "clean" words list.
